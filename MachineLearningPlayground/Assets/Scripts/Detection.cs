@@ -9,12 +9,6 @@ using Unity.Barracuda;
 using TMPro;
 
 using HoloLensCameraStream;
-using Unity.XR.CoreUtils;
-using Microsoft.MixedReality.Toolkit.UI;
-using static UnityEngine.UI.GridLayoutGroup;
-using Unity.VisualScripting;
-using Microsoft.MixedReality.Toolkit.Diagnostics;
-using System.Threading.Tasks;
 
 #if WINDOWS_UWP && XR_PLUGIN_OPENXR
 using Windows.Perception.Spatial;
@@ -25,37 +19,32 @@ using Windows.UI.Input.Spatial;
 #endif
 
 
-public class DefaultBenchmark : MonoBehaviour
+public class Detection : MonoBehaviour
 {
     public NNModel model;
-    public int numClasses = 80;
-    public int batchSize = 1;
+    private Model runtimeModel;
+    private IWorker worker;
 
+    public int cameraResolutionWidth;
+    public int cameraResolutionHeight;
+    private HoloLensCameraStream.Resolution resolution;
+    private VideoCapture videoCapture;
+
+    public int inferenceImgSize = 160;
+    public int numClasses = 80;
+    public float confidenceThreshold;
+    
+    private List<DetectionResult> boxes;
+    private List<Tuple<GameObject, Renderer>> labels;
     private COCONames names;
     private COCOColors colors;
-    private YoloDetector detector;
-    public float confidenceThreshold;
-    List<DetectionResult> boxes;
-    public int imgSize = 224;
-    List<Tuple<GameObject, Renderer>> labels;
+    private Texture2D pictureTexture;
+    private Texture2D croppedTexture;
 
-    private int benchmarkSize = 101;
-    private int benchmarkCounter = 0;
-    private string benchmarkString = "";
-
-    private GameObject _picture;
-    private Renderer _pictureRenderer;
-    private Texture2D _pictureTexture;
-
-    private RaycastLaser _laser;
-    public Material _laserMaterial;
+    private RaycastLaser laser;
+    public Material laserMaterial;
 
     private TextMeshPro textMesh;
-
-    public int resolutionWidth;
-    public int resolutionHeight;
-    private HoloLensCameraStream.Resolution _resolution;
-    private VideoCapture _videoCapture;
 
     private IntPtr _spatialCoordinateSystemPtr;
 
@@ -72,61 +61,38 @@ public class DefaultBenchmark : MonoBehaviour
     private byte[] _latestImageBytes;
     private bool stopVideo;
 
-#if WINDOWS_UWP
-    private SpatialInteractionManager _spatialInteraction;
-#endif
-
     private class SampleStruct
     {
         public float[] camera2WorldMatrix, projectionMatrix;
         public byte[] data;
     }
 
-    void Awake()
-    {
-#if WINDOWS_UWP
-        UnityEngine.WSA.Application.InvokeOnUIThread(() =>
-        {
-            _spatialInteraction = SpatialInteractionManager.GetForCurrentView();
-        }, true);
-        _spatialInteraction.SourcePressed += SpatialInteraction_SourcePressed;
-#endif
-    }
-
     void Start()
     {
 #if WINDOWS_UWP
 
-#if XR_PLUGIN_WINDOWSMR
 
-        _spatialCoordinateSystemPtr = UnityEngine.XR.WindowsMR.WindowsMREnvironment.OriginSpatialCoordinateSystem;
-
-#elif XR_PLUGIN_OPENXR
+#if XR_PLUGIN_OPENXR
 
         _spatialCoordinateSystem = Microsoft.MixedReality.OpenXR.PerceptionInterop.GetSceneCoordinateSystem(UnityEngine.Pose.identity) as SpatialCoordinateSystem;
 
-#elif BUILTIN_XR
-
-#if UNITY_2017_2_OR_NEWER
-        _spatialCoordinateSystemPtr = UnityEngine.XR.WSA.WorldManager.GetNativeISpatialCoordinateSystemPtr();
-#else
-        _spatialCoordinateSystemPtr = UnityEngine.VR.WSA.WorldManager.GetNativeISpatialCoordinateSystemPtr();
 #endif
-
 #endif
-
-#endif
-
         CameraStreamHelper.Instance.GetVideoCaptureAsync(OnVideoCaptureCreated);
+
+        runtimeModel = ModelLoader.Load(model);
+        worker = WorkerFactory.CreateWorker(WorkerFactory.Type.ComputePrecompiled, runtimeModel);
+
         names = new COCONames();
         colors = new COCOColors();
-        detector = new YoloDetector(model);
+
+        croppedTexture = new Texture2D(inferenceImgSize, inferenceImgSize, TextureFormat.RGB24, false);
+
         var _ = GameObject.Find("Prediction");
         textMesh = _.GetComponent<TextMeshPro>();
         boxes = new List<DetectionResult>();
         labels = new List<Tuple<GameObject, Renderer>>();
-
-        _laser = GetComponent<RaycastLaser>();
+        laser = GetComponent<RaycastLaser>();
 
         StartCoroutine(wait());
         StartCoroutine(DetectWebcam());
@@ -134,21 +100,16 @@ public class DefaultBenchmark : MonoBehaviour
 
     private IEnumerator wait()
     {
-        yield return new WaitForSeconds(5.0f);
+        yield return new WaitForSeconds(2.0f);
     }
 
     private void OnDestroy()
     {
-        if (_videoCapture == null)
+        if (videoCapture == null)
             return;
 
-        _videoCapture.FrameSampleAcquired += null;
-        _videoCapture.Dispose();
-
-#if WINDOWS_UWP
-        _spatialInteraction.SourcePressed -= SpatialInteraction_SourcePressed;
-        _spatialInteraction = null;
-#endif
+        videoCapture.FrameSampleAcquired += null;
+        videoCapture.Dispose();
     }
 
     private void OnVideoCaptureCreated(VideoCapture v)
@@ -159,36 +120,32 @@ public class DefaultBenchmark : MonoBehaviour
             return;
         }
 
-        _videoCapture = v;
+        videoCapture = v;
 
-        //Request the spatial coordinate ptr if you want fetch the camera and set it if you need to 
 #if WINDOWS_UWP
-
 #if XR_PLUGIN_OPENXR
         CameraStreamHelper.Instance.SetNativeISpatialCoordinateSystem(_spatialCoordinateSystem);
-#elif XR_PLUGIN_WINDOWSMR || BUILTIN_XR
-        CameraStreamHelper.Instance.SetNativeISpatialCoordinateSystemPtr(_spatialCoordinateSystemPtr);
-#endif
 
 #endif
+#endif
 
-        _resolution = CameraStreamHelper.Instance.GetLowestResolution();
-        _resolution = new HoloLensCameraStream.Resolution(resolutionWidth, resolutionHeight);
-        float frameRate = CameraStreamHelper.Instance.GetHighestFrameRate(_resolution);
+        resolution = CameraStreamHelper.Instance.GetLowestResolution();
+        resolution = new HoloLensCameraStream.Resolution(cameraResolutionWidth, cameraResolutionHeight);
+        float frameRate = CameraStreamHelper.Instance.GetHighestFrameRate(resolution);
 
-        _videoCapture.FrameSampleAcquired += OnFrameSampleAcquired;
+        videoCapture.FrameSampleAcquired += OnFrameSampleAcquired;
 
         CameraParameters cameraParams = new CameraParameters();
-        cameraParams.cameraResolutionHeight = _resolution.height;
-        cameraParams.cameraResolutionWidth = _resolution.width;
+        cameraParams.cameraResolutionHeight = resolution.height;
+        cameraParams.cameraResolutionWidth = resolution.width;
         cameraParams.frameRate = Mathf.RoundToInt(frameRate);
         cameraParams.pixelFormat = CapturePixelFormat.BGRA32;
 
-        UnityEngine.WSA.Application.InvokeOnAppThread(() => { _pictureTexture = new Texture2D(_resolution.width, _resolution.height, TextureFormat.BGRA32, false); }, false);
+        UnityEngine.WSA.Application.InvokeOnAppThread(() => { pictureTexture = new Texture2D(resolution.width, resolution.height, TextureFormat.BGRA32, false); }, false);
 
-        _videoCapture.StartVideoModeAsync(cameraParams, OnVideoModeStarted);
+        videoCapture.StartVideoModeAsync(cameraParams, OnVideoModeStarted);
 
-        Debug.LogWarning($"{_resolution.height},  {_resolution.width}, {cameraParams.frameRate}");
+        Debug.LogWarning($"{resolution.height},  {resolution.width}, {cameraParams.frameRate}");
     }
 
     private void OnVideoModeStarted(VideoCaptureResult result)
@@ -224,8 +181,8 @@ public class DefaultBenchmark : MonoBehaviour
 
         UnityEngine.WSA.Application.InvokeOnAppThread(() =>
         {
-            _pictureTexture.LoadRawTextureData(s.data);
-            _pictureTexture.Apply();
+            pictureTexture.LoadRawTextureData(s.data);
+            pictureTexture.Apply();
 
             Vector3 inverseNormal = -camera2WorldMatrix.GetColumn(2);
             // Position the canvas object slightly in front of the real world web camera.
@@ -242,25 +199,6 @@ public class DefaultBenchmark : MonoBehaviour
         }, false);
     }
 
-#if WINDOWS_UWP
-    private void SpatialInteraction_SourcePressed(SpatialInteractionManager sender, SpatialInteractionSourceEventArgs args)
-    {
-        var item = args.State;
-        UnityEngine.WSA.Application.InvokeOnAppThread(() =>
-        {
-            Debug.Log("SourcePressed");
-
-            for (int i = _laser.transform.childCount - 1; i >= 0; --i)
-            {
-                GameObject.DestroyImmediate(_laser.transform.GetChild(i).gameObject);
-            }
-
-            stopVideo = !stopVideo;
-
-        }, false);
-    }
-#endif
-
     void Update()
     {
         if (textMesh != null)
@@ -271,52 +209,30 @@ public class DefaultBenchmark : MonoBehaviour
 
     public IEnumerator DetectWebcam()
     {
-        Debug.Log("Staring detection coroutine!");
         List<DetectionResult> boxes_tmp = new List<DetectionResult>();
         while (true)
         {
-            if (_pictureTexture)
+            if (pictureTexture)
             {
                 camera2WorldMatrix_local = camera2WorldMatrix;
                 projectionMatrix_local = projectionMatrix;
 
-                var sw_pre = System.Diagnostics.Stopwatch.StartNew();
-                textMesh.text = System.Diagnostics.Stopwatch.IsHighResolution.ToString();
-                var data = _pictureTexture.GetPixels32();
-                Tensor tensor = ToTensor(data, imgSize, imgSize, 424);
-                sw_pre.Stop();
-                var pre_time = sw_pre.Elapsed;
+                CropTexture(inferenceImgSize, inferenceImgSize);
+                var tensor = new Tensor(croppedTexture, false, Vector4.one, Vector4.zero);
 
-                var sw_inference = System.Diagnostics.Stopwatch.StartNew();
-                detector.worker.Execute(tensor).FlushSchedule(true);
-                Tensor result = detector.worker.PeekOutput("output0");
-                sw_inference.Stop();
-                var inference_time = sw_inference.Elapsed;
+                worker.Execute(tensor).FlushSchedule(true);
+                Tensor result = worker.PeekOutput("output0");
+                
                 boxes_tmp.Clear();
                 boxes.Clear();
 
-                var sw_post = System.Diagnostics.Stopwatch.StartNew();
                 ParseYoloOutput(result, confidenceThreshold, boxes_tmp);
                 boxes = NonMaxSuppression(0.5f, boxes_tmp);
-                sw_post.Stop();
-                var post_time = sw_post.Elapsed;
-
-                benchmarkString += $"{pre_time.TotalMilliseconds},{inference_time.TotalMilliseconds},{post_time.TotalMilliseconds} \r\n";
-                benchmarkCounter++;
-
-                Debug.LogWarning($"<debug> {boxes.Count}");
-
-                if (benchmarkCounter == benchmarkSize){
-                    SaveData();
-                    textMesh.text = "Benchmark Saved!";
-                }
 
                 if (textMesh != null)
                 {
                     textMesh.text = $"Boxes: {boxes.Count}";
                 }
-
-                tensor.Dispose();
 
                 foreach (var (go, r) in labels)
                 {
@@ -327,9 +243,11 @@ public class DefaultBenchmark : MonoBehaviour
 
                 foreach (var l in boxes)
                 {
-                    GenerateBoundingBox(l, camera2WorldMatrix_local, projectionMatrix);
+                    GenerateBoundingBox(l, camera2WorldMatrix_local, projectionMatrix_local);
                 }
 
+                tensor.Dispose();
+                result.Dispose();
                 yield return null;
             }
             else
@@ -338,34 +256,6 @@ public class DefaultBenchmark : MonoBehaviour
             }
         }
     }
-    private static Tensor ToTensor(Color32[] pic, int width, int height, int requestedWidth)
-    {
-        float[] floatValues = new float[width * height * 3];
-
-        int beginning = (((pic.Length / requestedWidth) - height) * requestedWidth) / 2;
-        int leftOffset = (requestedWidth - width) / 2;
-
-        Span<float> floatValuesSpan = floatValues.AsSpan();
-        Span<Color32> picSpan = pic.AsSpan(beginning + leftOffset);
-
-        for (int i = 0; i < height; i++)
-        {
-            Span<float> rowSpan = floatValuesSpan.Slice(i * width * 3, width * 3);
-            Span<Color32> rowDataSpan = picSpan.Slice(i * requestedWidth, width);
-
-            for (int j = 0; j < width; j++)
-            {
-                var color = rowDataSpan[j];
-
-                rowSpan[j * 3 + 0] = (color.r - 0.0f) / 255.0f;
-                rowSpan[j * 3 + 1] = (color.g - 0.0f) / 255.0f;
-                rowSpan[j * 3 + 2] = (color.b - 0.0f) / 255.0f;
-            }
-        }
-
-        return new Tensor(1, height, width, 3, floatValues);
-    }
-
     private void ParseYoloOutput(Tensor tensor, float confidenceThreshold, List<DetectionResult> boxes)
     {
             for (int i = 0; i < tensor.shape.width; i++)
@@ -432,34 +322,33 @@ public class DefaultBenchmark : MonoBehaviour
 
     private List<DetectionResult> NonMaxSuppression(float threshold, List<DetectionResult> boxes)
     {
-        var sortedBoxes = boxes.OrderByDescending(b => b.Confidence).ToList();
         var results = new List<DetectionResult>();
-
-        for (int i = 0; i < sortedBoxes.Count; i++)
+        if (boxes.Count == 0)
         {
-            var boxA = sortedBoxes[i];
-            bool discard = false;
+            return results;
+        }
+        var detections = boxes.OrderByDescending(b => b.Confidence).ToList();
+        results.Add(detections[0]);
 
-            for (var j = i + 1; j < sortedBoxes.Count; j++)
+        for (int i = 1; i < detections.Count; i++)
+        {
+            bool add = true;
+            for (int j = 0; j < results.Count; j++)
             {
-                var boxB = sortedBoxes[j];
-
-                if (IoU(boxA.Rect, boxB.Rect) > threshold)
+                float iou = IoU(detections[i].Rect, results[j].Rect);
+                if (iou > threshold)
                 {
-                    discard = true;
+                    add = false;
                     break;
                 }
             }
-
-            if (!discard)
-            {
-                results.Add(boxA);
-            }
+            if (add)
+                results.Add(detections[i]);
         }
 
         return results;
-    }
 
+    }
     public Vector3 shootLaserFrom(Vector3 from, Vector3 direction, float length, Material mat = null)
     {
         Ray ray = new Ray(from, direction);
@@ -486,18 +375,18 @@ public class DefaultBenchmark : MonoBehaviour
 
     public Vector3 GenerateBoundingBox(DetectionResult det, Matrix4x4 camera2WorldMatrix_local, Matrix4x4 projectionMatrix_local)
     {
-        var x_offset = (resolutionWidth - imgSize) / 2;
-        var y_offset = (resolutionHeight - imgSize) / 2;
-        Vector3 direction = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, _resolution, new Vector2(det.Bbox.X + x_offset, det.Bbox.Y + y_offset));
+        var x_offset = (cameraResolutionWidth - inferenceImgSize) / 2;
+        var y_offset = (cameraResolutionHeight - inferenceImgSize) / 2;
+        Vector3 direction = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, resolution, new Vector2(det.Bbox.X + x_offset, det.Bbox.Y + y_offset));
         var centerHit = shootLaserRaycastHit(camera2WorldMatrix_local.GetColumn(3), direction, 10f);
 
         var distance = centerHit.distance;
         distance -= 0.05f;
 
-        Vector3 corner_0 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, _resolution, new Vector2((det.Bbox.X + x_offset) - (det.Bbox.Width / 2), det.Bbox.Y + y_offset - (det.Bbox.Height / 2)));
-        Vector3 corner_1 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, _resolution, new Vector2((det.Bbox.X + x_offset) - (det.Bbox.Width / 2), det.Bbox.Y + y_offset + (det.Bbox.Height / 2)));
-        Vector3 corner_2 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, _resolution, new Vector2((det.Bbox.X + x_offset) + (det.Bbox.Width / 2), det.Bbox.Y + y_offset - (det.Bbox.Height / 2)));
-        Vector3 corner_3 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, _resolution, new Vector2((det.Bbox.X + x_offset) + (det.Bbox.Width / 2), det.Bbox.Y + y_offset + (det.Bbox.Height / 2)));
+        Vector3 corner_0 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, resolution, new Vector2((det.Bbox.X + x_offset) - (det.Bbox.Width / 2), det.Bbox.Y + y_offset - (det.Bbox.Height / 2)));
+        Vector3 corner_1 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, resolution, new Vector2((det.Bbox.X + x_offset) - (det.Bbox.Width / 2), det.Bbox.Y + y_offset + (det.Bbox.Height / 2)));
+        Vector3 corner_2 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, resolution, new Vector2((det.Bbox.X + x_offset) + (det.Bbox.Width / 2), det.Bbox.Y + y_offset - (det.Bbox.Height / 2)));
+        Vector3 corner_3 = LocatableCameraUtils.PixelCoordToWorldCoord(camera2WorldMatrix_local, projectionMatrix_local, resolution, new Vector2((det.Bbox.X + x_offset) + (det.Bbox.Width / 2), det.Bbox.Y + y_offset + (det.Bbox.Height / 2)));
 
         var point_0 = shootLaserFrom(camera2WorldMatrix_local.GetColumn(3), corner_0, distance);
         var point_1 = shootLaserFrom(camera2WorldMatrix_local.GetColumn(3), corner_1, distance);
@@ -505,7 +394,6 @@ public class DefaultBenchmark : MonoBehaviour
         var point_3 = shootLaserFrom(camera2WorldMatrix_local.GetColumn(3), corner_3, distance);
 
         var go = new GameObject();
-        Vector3 inverseNormal = -camera2WorldMatrix_local.GetColumn(2);
 
         go.transform.position = point_0;
         go.transform.rotation = Camera.main.transform.rotation;
@@ -516,7 +404,7 @@ public class DefaultBenchmark : MonoBehaviour
         lr.widthMultiplier = 0.01f;
         lr.loop = true;
         lr.positionCount = 4;
-        lr.material = _laserMaterial;
+        lr.material = laserMaterial;
         lr.material.color = colors.map[det.LabelIdx];
 
         lr.SetPosition(0, point_0);
@@ -524,32 +412,18 @@ public class DefaultBenchmark : MonoBehaviour
         lr.SetPosition(1, point_2);
         lr.SetPosition(2, point_3);
 
-/*        var text = go.GetOrAddComponent<ToolTip>();
-        text.Anchor = go;
-        text.ToolTipText = $"{det.Label} : {det.Confidence:N2}";
-        text.FontSize = 20;
-        text.ContentScale = 3;
-        text.Pivot.transform.rotation = go.transform.rotation;
-        text.Pivot.transform.position = go.transform.position + Vector3.up * 0.05f;*/
-
         labels.Add(Tuple.Create(go, renderer));
 
         return centerHit.point;
     }
 
-    private async void SaveData()
+    private void CropTexture(int cropWidth, int cropHeight)
     {
-#if WINDOWS_UWP
-        var storageFolder = Windows.Storage.ApplicationData.Current.LocalFolder;
-        Windows.Storage.StorageFile posFile = await storageFolder.CreateFileAsync("defaultBenchmarkResults.csv", Windows.Storage.CreationCollisionOption.ReplaceExisting);
-        Task task = new Task(
-        async () =>
-            {
-                await Windows.Storage.FileIO.AppendTextAsync(posFile, benchmarkString);
-            }
-        );
-        task.Start();
-        task.Wait();
-#endif
+        int centerX = pictureTexture.width / 2 - cropWidth / 2;
+        int centerY = pictureTexture.height / 2 - cropHeight / 2;
+        Color[] pixels = pictureTexture.GetPixels(centerX, centerY, cropWidth, cropHeight);
+
+        croppedTexture.SetPixels(pixels);
+        croppedTexture.Apply();
     }
 }

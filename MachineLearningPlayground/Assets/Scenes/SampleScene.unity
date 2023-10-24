@@ -595,14 +595,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8ee887551c3c50b4c9035c68170cc0df, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  model: {fileID: 0}
+  model: {fileID: 5022602860645237092, guid: d802c5dc62ec95a4b833b288d447c8ab, type: 3}
+  cameraResolutionWidth: 424
+  cameraResolutionHeight: 240
+  inferenceImgSize: 160
   numClasses: 80
-  batchSize: 1
-  confidenceThreshold: 0.4
-  imgSize: 224
-  _laserMaterial: {fileID: 2100000, guid: c6ad9de90938a884996bf30869b1562a, type: 2}
-  resolutionWidth: 240
-  resolutionHeight: 424
+  confidenceThreshold: 0.2
+  laserMaterial: {fileID: 2100000, guid: c6ad9de90938a884996bf30869b1562a, type: 2}
 --- !u!114 &963194234
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -689,84 +688,6 @@ Transform:
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 963194228}
-  - {fileID: 1927654601}
   m_Father: {fileID: 0}
   m_RootOrder: 2
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!1 &1927654600
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1927654601}
-  - component: {fileID: 1927654603}
-  - component: {fileID: 1927654602}
-  m_Layer: 0
-  m_Name: ModelInference
-  m_TagString: EditorOnly
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1927654601
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1927654600}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1565179765}
-  m_RootOrder: 1
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1927654602
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1927654600}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8f11751cc63781a4b8db5f3cb68ce63b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  image: {fileID: 0}
-  model: {fileID: 5022602860645237092, guid: 515280e2a84eb3d4492ec3d512c1c35f, type: 3}
-  targetTexture: {fileID: 0}
-  width: 1920
-  height: 1080
-  fps: 30
-  webcamTexture: {fileID: 0}
-  cube: {fileID: 0}
-  renderer: {fileID: 0}
-  bckg: {fileID: 0}
-  fileName: 
-  destination: 
-  filePath: 
-  confidenceThreshold: 0.2
-  text: {fileID: 0}
-  textGO: {fileID: 0}
-  textMesh: {fileID: 0}
-  data: []
---- !u!114 &1927654603
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1927654600}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: b80553450df4b7c4b8ede5900d59903f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  webcamTexture: {fileID: 0}
-  texture: {fileID: 0}

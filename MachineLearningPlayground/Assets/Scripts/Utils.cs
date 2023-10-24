@@ -1,26 +1,7 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using Unity.Barracuda;
 using System;
 
-public class YoloDetector
-{
-    public Model runtimeModel;
-    public IWorker worker;
-
-    public YoloDetector(NNModel modelAsset)
-    {
-        runtimeModel = ModelLoader.Load(modelAsset);
-        worker = WorkerFactory.CreateWorker(WorkerFactory.Type.ComputePrecompiled, runtimeModel);
-        Debug.Log("======== Model loaded! ========");
-    }
-
-    public void Detect(Tensor input)
-    {
-        worker.Execute(input);
-    }
-}
 
 public class BoundingBox
 {
@@ -33,11 +14,8 @@ public class BoundingBox
 public class DetectionResult
 {
     public BoundingBox Bbox { get; set; }
-
     public string Label { get; set; }
-
     public int LabelIdx { get; set; }
-
     public float Confidence { get; set; }
 
     public Rect Rect
