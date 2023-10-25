@@ -31,3 +31,14 @@ When exported, copy a .onnx file to a *Assets/Weights** directory.
 1. Drag and drop a exported neural network weights file to a *Model* property in Unity Editor.
 2. In top bar select **File**->**Build Settings**->**Build**. Create a folder to place a build files and start a build process.
 3. After finished, open a build directory, open a .sln file with a project, make sure to pick a proper build configuration, architecture and device, then build and deploy solution.
+
+### Versions
+
+We have used a following versions of software:
+1. Unity Editor 2021.3.20f1
+2. Microsoft Visual Studio 2022 17.5.1
+3. Barracuda 3.0.0
+
+### Dependencies
+
+This project uses a https://github.com/EnoxSoftware/HoloLensCameraStream plugin to gather camera feed and calculate a pose of bounding boxes in a 3D space.
